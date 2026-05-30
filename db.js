@@ -1,20 +1,13 @@
 const { Pool } = require("pg");
-require("dotenv").config();
+
+console.log("DATABASE_URL existe:", !!process.env.DATABASE_URL);
+console.log("NODE_ENV:", process.env.NODE_ENV);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl:
-    process.env.NODE_ENV === "production"
-      ? { rejectUnauthorized: false }
-      : false,
-});
-
-pool.on("connect", () => {
-  console.log("✅ Conectado a PostgreSQL Railway");
-});
-
-pool.on("error", (error) => {
-  console.log("❌ Error en PostgreSQL:", error);
+  ssl: {
+    rejectUnauthorized: false,
+  },
 });
 
 module.exports = pool;
