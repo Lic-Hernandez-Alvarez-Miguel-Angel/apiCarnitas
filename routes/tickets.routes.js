@@ -16,6 +16,16 @@ function prepararItems(items) {
   }));
 }
 
+function normalizarMetodoPago(metodo) {
+  const metodoFinal = String(metodo || "efectivo").toLowerCase().trim();
+
+  if (metodoFinal === "transferencia" || metodoFinal === "trasferencia") {
+    return "transferencia";
+  }
+
+  return "efectivo";
+}
+
 // =====================================================
 // OBTENER TICKETS
 // Si rol es jefe, ve todos.
@@ -61,6 +71,9 @@ router.get("/", async (req, res) => {
         t.cambio,
         t.total,
         t.estado,
+        t.comprobante_pago,
+        t.comprobante_pago_mime,
+        t.fecha_pago,
         t.fecha_venta
       FROM tickets t
       JOIN usuarios u ON t.usuario_id = u.id
@@ -138,6 +151,9 @@ router.get("/:id", async (req, res) => {
         t.cambio,
         t.total,
         t.estado,
+        t.comprobante_pago,
+        t.comprobante_pago_mime,
+        t.fecha_pago,
         t.fecha_venta
       FROM tickets t
       JOIN usuarios u ON t.usuario_id = u.id
@@ -625,11 +641,19 @@ router.put("/:ticketId/items/:itemId/cancelar", async (req, res) => {
 // SOLICITAR FINALIZACIÓN DEL TICKET
 // El empleado captura el pago, pero NO cierra el ticket.
 // El ticket queda pendiente para que el jefe confirme.
+// Si paga por transferencia, se guarda comprobante en base64.
 // =====================================================
 router.put("/:id/solicitar-finalizacion", async (req, res) => {
   try {
     const { id } = req.params;
-    const { monto_pagado, metodo_pago = "efectivo" } = req.body;
+    const {
+      monto_pagado,
+      metodo_pago = "efectivo",
+      comprobante_pago = null,
+      comprobante_pago_mime = null,
+    } = req.body;
+
+    const metodoPagoFinal = normalizarMetodoPago(metodo_pago);
 
     const pendientesResult = await pool.query(
       `
@@ -673,7 +697,7 @@ router.put("/:id/solicitar-finalizacion", async (req, res) => {
     const total = Number(ticketActual.rows[0].total);
     const pagado = Number(monto_pagado);
 
-    if (metodo_pago === "efectivo") {
+    if (metodoPagoFinal === "efectivo") {
       if (!monto_pagado || Number.isNaN(pagado) || pagado < total) {
         return res.status(400).json({
           error: `El monto pagado debe ser igual o mayor al total: $${total.toFixed(2)}`,
@@ -681,7 +705,14 @@ router.put("/:id/solicitar-finalizacion", async (req, res) => {
       }
     }
 
-    const cambio = metodo_pago === "efectivo" ? pagado - total : 0;
+    if (metodoPagoFinal === "transferencia" && !comprobante_pago) {
+      return res.status(400).json({
+        error: "Debes tomar o subir la foto del comprobante de transferencia.",
+      });
+    }
+
+    const montoPagadoFinal = metodoPagoFinal === "efectivo" ? pagado : total;
+    const cambio = metodoPagoFinal === "efectivo" ? pagado - total : 0;
 
     const result = await pool.query(
       `
@@ -689,14 +720,21 @@ router.put("/:id/solicitar-finalizacion", async (req, res) => {
       SET estado = 'pendiente_confirmacion',
           metodo_pago = $1,
           monto_pagado = $2,
-          cambio = $3
-      WHERE id = $4
+          cambio = $3,
+          comprobante_pago = $4,
+          comprobante_pago_mime = $5,
+          fecha_pago = NOW()
+      WHERE id = $6
       RETURNING *
       `,
       [
-        metodo_pago,
-        metodo_pago === "efectivo" ? pagado : total,
+        metodoPagoFinal,
+        montoPagadoFinal,
         cambio,
+        metodoPagoFinal === "transferencia" ? comprobante_pago : null,
+        metodoPagoFinal === "transferencia"
+          ? comprobante_pago_mime || "image/jpeg"
+          : null,
         id,
       ]
     );
