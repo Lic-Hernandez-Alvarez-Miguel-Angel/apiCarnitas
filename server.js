@@ -12,6 +12,7 @@ const movimientosRoutes = require("./routes/movimientos.routes");
 const ticketsRoutes = require("./routes/tickets.routes");
 const consumiblesRoutes = require("./routes/consumibles.routes");
 const asignacionesRoutes = require("./routes/asignaciones.routes");
+const cajaRoutes = require("./routes/caja.routes");
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use("/api/movimientos", movimientosRoutes);
 app.use("/api/tickets", ticketsRoutes);
 app.use("/api/consumibles", consumiblesRoutes);
 app.use("/api/asignaciones", asignacionesRoutes);
+app.use("/api/caja", cajaRoutes);
 
 const PORT = process.env.PORT || 3000;
 
