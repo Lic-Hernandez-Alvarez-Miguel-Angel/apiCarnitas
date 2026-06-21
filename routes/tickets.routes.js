@@ -16,8 +16,11 @@ function prepararItems(items) {
   }));
 }
 
-// Obtener tickets
-// Obtener tickets con filtros opcionales
+// =====================================================
+// OBTENER TICKETS
+// Si rol es jefe, ve todos.
+// Si es empleado, se filtra por usuario/zona.
+// =====================================================
 router.get("/", async (req, res) => {
   try {
     const { usuario_id, punto_venta_id, rol } = req.query;
@@ -78,13 +81,9 @@ router.get("/", async (req, res) => {
   }
 });
 
-
-
-
-
-
-
-// Buscar ticket abierto por mesa
+// =====================================================
+// BUSCAR TICKET ABIERTO POR MESA
+// =====================================================
 router.get("/mesa/:mesa", async (req, res) => {
   try {
     const { mesa } = req.params;
@@ -114,7 +113,9 @@ router.get("/mesa/:mesa", async (req, res) => {
   }
 });
 
-// Obtener ticket por ID con detalle
+// =====================================================
+// OBTENER TICKET POR ID CON DETALLE
+// =====================================================
 router.get("/:id", async (req, res) => {
   try {
     const { id } = req.params;
@@ -128,22 +129,29 @@ router.get("/:id", async (req, res) => {
         u.nombre AS usuario,
         t.almacen_id,
         a.nombre AS almacen,
+        t.punto_venta_id,
+        pv.nombre AS punto_venta,
         t.tipo_servicio,
         t.mesa,
         t.metodo_pago,
+        t.monto_pagado,
+        t.cambio,
         t.total,
         t.estado,
         t.fecha_venta
       FROM tickets t
       JOIN usuarios u ON t.usuario_id = u.id
       JOIN almacenes a ON t.almacen_id = a.id
+      LEFT JOIN puntos_venta pv ON pv.id = t.punto_venta_id
       WHERE t.id = $1
       `,
       [id]
     );
 
     if (ticketResult.rows.length === 0) {
-      return res.status(404).json({ error: "Ticket no encontrado" });
+      return res.status(404).json({
+        error: "Ticket no encontrado",
+      });
     }
 
     const detalleResult = await pool.query(
@@ -177,73 +185,75 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Crear ticket
+// =====================================================
+// CREAR TICKET
+// =====================================================
 router.post("/", async (req, res) => {
   const client = await pool.connect();
 
   try {
-   const {
-  tipoServicio,
-  tipo_servicio,
-  mesa,
-  punto_venta_id,
-  usuario_id,
-  items,
-} = req.body;
+    const {
+      tipoServicio,
+      tipo_servicio,
+      mesa,
+      punto_venta_id,
+      usuario_id,
+      items,
+    } = req.body;
 
     if (!items || items.length === 0) {
       return res.status(400).json({
         error: "El ticket debe tener productos",
       });
     }
-const tipoFinal = tipoServicio || tipo_servicio || "llevar";
-const itemsPreparados = prepararItems(items);
-const total = itemsPreparados.reduce((acc, item) => acc + item.subtotal, 0);
 
-if (!usuario_id) {
-  return res.status(400).json({
-    error: "El usuario_id es obligatorio",
-  });
-}
+    if (!usuario_id) {
+      return res.status(400).json({
+        error: "El usuario_id es obligatorio",
+      });
+    }
 
-if (!punto_venta_id) {
-  return res.status(400).json({
-    error: "El punto_venta_id es obligatorio",
-  });
-}
+    if (!punto_venta_id) {
+      return res.status(400).json({
+        error: "El punto_venta_id es obligatorio",
+      });
+    }
 
-const usuarioId = usuario_id;
-const almacenId = 1;
-const folio = `TKT-${Date.now()}`;
+    const tipoFinal = tipoServicio || tipo_servicio || "llevar";
+    const itemsPreparados = prepararItems(items);
+    const total = itemsPreparados.reduce((acc, item) => acc + item.subtotal, 0);
+
+    const almacenId = 1;
+    const folio = `TKT-${Date.now()}`;
 
     await client.query("BEGIN");
 
     const ticketResult = await client.query(
       `
-     INSERT INTO tickets (
-  folio,
-  usuario_id,
-  almacen_id,
-  punto_venta_id,
-  tipo_servicio,
-  mesa,
-  metodo_pago,
-  total,
-  estado
-)
+      INSERT INTO tickets (
+        folio,
+        usuario_id,
+        almacen_id,
+        punto_venta_id,
+        tipo_servicio,
+        mesa,
+        metodo_pago,
+        total,
+        estado
+      )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'abierto')
       RETURNING *
       `,
-     [
-  folio,
-  usuarioId,
-  almacenId,
-  punto_venta_id,
-  tipoFinal,
-  tipoFinal === "mesa" ? mesa : "",
-  "efectivo",
-  total,
-]
+      [
+        folio,
+        usuario_id,
+        almacenId,
+        punto_venta_id,
+        tipoFinal,
+        tipoFinal === "mesa" ? mesa : "",
+        "efectivo",
+        total,
+      ]
     );
 
     const ticket = ticketResult.rows[0];
@@ -292,7 +302,9 @@ const folio = `TKT-${Date.now()}`;
   }
 });
 
-// Agregar items a mesa abierta
+// =====================================================
+// AGREGAR ITEMS A MESA ABIERTA
+// =====================================================
 router.post("/mesa/:mesa/items", async (req, res) => {
   const client = await pool.connect();
 
@@ -388,7 +400,9 @@ router.post("/mesa/:mesa/items", async (req, res) => {
   }
 });
 
-// Agregar items a ticket por ID
+// =====================================================
+// AGREGAR ITEMS A TICKET POR ID
+// =====================================================
 router.post("/:id/items", async (req, res) => {
   const client = await pool.connect();
 
@@ -481,7 +495,9 @@ router.post("/:id/items", async (req, res) => {
   }
 });
 
-// Marcar producto como entregado
+// =====================================================
+// MARCAR PRODUCTO COMO ENTREGADO
+// =====================================================
 router.put("/:ticketId/items/:itemId/entregar", async (req, res) => {
   try {
     const { ticketId, itemId } = req.params;
@@ -492,6 +508,7 @@ router.put("/:ticketId/items/:itemId/entregar", async (req, res) => {
       SET estado_item = 'entregado'
       WHERE id = $1
       AND ticket_id = $2
+      AND COALESCE(estado_item, 'pendiente') = 'pendiente'
       RETURNING *
       `,
       [itemId, ticketId]
@@ -499,7 +516,7 @@ router.put("/:ticketId/items/:itemId/entregar", async (req, res) => {
 
     if (result.rows.length === 0) {
       return res.status(404).json({
-        error: "Producto no encontrado en el ticket",
+        error: "Producto no encontrado, cancelado o ya entregado.",
       });
     }
 
@@ -514,7 +531,12 @@ router.put("/:ticketId/items/:itemId/entregar", async (req, res) => {
     });
   }
 });
-// Cancelar producto del ticket
+
+// =====================================================
+// CANCELAR PRODUCTO DEL TICKET
+// Pendiente -> Cancelado
+// Descuenta el subtotal del total del ticket
+// =====================================================
 router.put("/:ticketId/items/:itemId/cancelar", async (req, res) => {
   const client = await pool.connect();
 
@@ -525,7 +547,11 @@ router.put("/:ticketId/items/:itemId/cancelar", async (req, res) => {
 
     const itemResult = await client.query(
       `
-      SELECT id, ticket_id, subtotal, COALESCE(estado_item, 'pendiente') AS estado_item
+      SELECT 
+        id, 
+        ticket_id, 
+        subtotal, 
+        COALESCE(estado_item, 'pendiente') AS estado_item
       FROM ticket_detalle
       WHERE id = $1
       AND ticket_id = $2
@@ -567,11 +593,12 @@ router.put("/:ticketId/items/:itemId/cancelar", async (req, res) => {
       [itemId, ticketId]
     );
 
-    await client.query(
+    const ticketActualizado = await client.query(
       `
       UPDATE tickets
       SET total = GREATEST(total - $1, 0)
       WHERE id = $2
+      RETURNING *
       `,
       [Number(item.subtotal || 0), ticketId]
     );
@@ -581,6 +608,7 @@ router.put("/:ticketId/items/:itemId/cancelar", async (req, res) => {
     res.json({
       mensaje: "Producto cancelado correctamente",
       item: itemCancelado.rows[0],
+      ticket: ticketActualizado.rows[0],
     });
   } catch (error) {
     await client.query("ROLLBACK");
@@ -593,13 +621,12 @@ router.put("/:ticketId/items/:itemId/cancelar", async (req, res) => {
   }
 });
 
-
-
-
-
-
-// Finalizar ticket
-router.put("/:id/finalizar", async (req, res) => {
+// =====================================================
+// SOLICITAR FINALIZACIÓN DEL TICKET
+// El empleado captura el pago, pero NO cierra el ticket.
+// El ticket queda pendiente para que el jefe confirme.
+// =====================================================
+router.put("/:id/solicitar-finalizacion", async (req, res) => {
   try {
     const { id } = req.params;
     const { monto_pagado, metodo_pago = "efectivo" } = req.body;
@@ -618,13 +645,13 @@ router.put("/:id/finalizar", async (req, res) => {
 
     if (pendientes > 0) {
       return res.status(400).json({
-        error: "No puedes finalizar. Aún hay productos pendientes.",
+        error: "No puedes solicitar finalización. Aún hay productos pendientes.",
       });
     }
 
     const ticketActual = await pool.query(
       `
-      SELECT total
+      SELECT id, total, estado
       FROM tickets
       WHERE id = $1
       `,
@@ -637,11 +664,17 @@ router.put("/:id/finalizar", async (req, res) => {
       });
     }
 
+    if (ticketActual.rows[0].estado !== "abierto") {
+      return res.status(400).json({
+        error: "Este ticket ya no está abierto.",
+      });
+    }
+
     const total = Number(ticketActual.rows[0].total);
     const pagado = Number(monto_pagado);
 
     if (metodo_pago === "efectivo") {
-      if (!monto_pagado || pagado < total) {
+      if (!monto_pagado || Number.isNaN(pagado) || pagado < total) {
         return res.status(400).json({
           error: `El monto pagado debe ser igual o mayor al total: $${total.toFixed(2)}`,
         });
@@ -653,7 +686,7 @@ router.put("/:id/finalizar", async (req, res) => {
     const result = await pool.query(
       `
       UPDATE tickets
-      SET estado = 'cerrado',
+      SET estado = 'pendiente_confirmacion',
           metodo_pago = $1,
           monto_pagado = $2,
           cambio = $3
@@ -669,13 +702,71 @@ router.put("/:id/finalizar", async (req, res) => {
     );
 
     res.json({
-      mensaje: "Ticket finalizado correctamente",
+      mensaje: "Ticket enviado al jefe para confirmación",
       ticket: result.rows[0],
     });
   } catch (error) {
-    console.error("Error al finalizar ticket:", error);
+    console.error("Error al solicitar finalización:", error);
     res.status(500).json({
-      error: "Error al finalizar ticket",
+      error: "Error al solicitar finalización del ticket",
+    });
+  }
+});
+
+// =====================================================
+// CONFIRMAR FINALIZACIÓN DEL TICKET
+// Solo el jefe puede cerrar definitivamente.
+// =====================================================
+router.put("/:id/confirmar-finalizacion", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rol } = req.body;
+
+    if (rol !== "jefe") {
+      return res.status(403).json({
+        error: "Solo el jefe puede confirmar la finalización del ticket.",
+      });
+    }
+
+    const ticketActual = await pool.query(
+      `
+      SELECT id, estado
+      FROM tickets
+      WHERE id = $1
+      `,
+      [id]
+    );
+
+    if (ticketActual.rows.length === 0) {
+      return res.status(404).json({
+        error: "Ticket no encontrado",
+      });
+    }
+
+    if (ticketActual.rows[0].estado !== "pendiente_confirmacion") {
+      return res.status(400).json({
+        error: "Este ticket no está pendiente de confirmación.",
+      });
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE tickets
+      SET estado = 'cerrado'
+      WHERE id = $1
+      RETURNING *
+      `,
+      [id]
+    );
+
+    res.json({
+      mensaje: "Ticket confirmado y finalizado correctamente",
+      ticket: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Error al confirmar finalización:", error);
+    res.status(500).json({
+      error: "Error al confirmar finalización del ticket",
     });
   }
 });
