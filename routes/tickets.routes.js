@@ -514,6 +514,89 @@ router.put("/:ticketId/items/:itemId/entregar", async (req, res) => {
     });
   }
 });
+// Cancelar producto del ticket
+router.put("/:ticketId/items/:itemId/cancelar", async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const { ticketId, itemId } = req.params;
+
+    await client.query("BEGIN");
+
+    const itemResult = await client.query(
+      `
+      SELECT id, ticket_id, subtotal, COALESCE(estado_item, 'pendiente') AS estado_item
+      FROM ticket_detalle
+      WHERE id = $1
+      AND ticket_id = $2
+      `,
+      [itemId, ticketId]
+    );
+
+    if (itemResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        error: "Producto no encontrado en el ticket",
+      });
+    }
+
+    const item = itemResult.rows[0];
+
+    if (item.estado_item === "entregado") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: "No puedes cancelar un producto que ya fue entregado.",
+      });
+    }
+
+    if (item.estado_item === "cancelado") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        error: "Este producto ya está cancelado.",
+      });
+    }
+
+    const itemCancelado = await client.query(
+      `
+      UPDATE ticket_detalle
+      SET estado_item = 'cancelado'
+      WHERE id = $1
+      AND ticket_id = $2
+      RETURNING *
+      `,
+      [itemId, ticketId]
+    );
+
+    await client.query(
+      `
+      UPDATE tickets
+      SET total = GREATEST(total - $1, 0)
+      WHERE id = $2
+      `,
+      [Number(item.subtotal || 0), ticketId]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      mensaje: "Producto cancelado correctamente",
+      item: itemCancelado.rows[0],
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Error al cancelar producto:", error);
+    res.status(500).json({
+      error: "Error al cancelar producto",
+    });
+  } finally {
+    client.release();
+  }
+});
+
+
+
+
+
 
 // Finalizar ticket
 router.put("/:id/finalizar", async (req, res) => {
